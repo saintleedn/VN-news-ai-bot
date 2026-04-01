@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -c ':*)",
+      "Bash(timeout 90)",
+      "Bash(python ainewsbot/main.py)",
+      "Bash(python test_send.py)"
+    ]
+  }
+}

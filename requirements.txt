@@ -1,0 +1,7 @@
+google-genai>=1.0.0
+feedparser>=6.0.10
+requests>=2.31.0
+python-telegram-bot>=20.0
+schedule>=1.2.0
+python-dotenv>=1.0.0
+pytz>=2024.1
