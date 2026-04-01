@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["python313"]
+nixPkgs = ["python3", "pip"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = ["pip3 install -r requirements.txt"]
 
 [start]
-cmd = "python ainewsbot/main.py"
+cmd = "python3 ainewsbot/main.py"
