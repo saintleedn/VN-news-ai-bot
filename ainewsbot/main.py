@@ -19,13 +19,11 @@ import schedule
 
 from config import (
     TZ_GMT7, DAILY_SEND_HOUR, DAILY_SEND_MINUTE, DIGEST_SEND_HOUR,
-    POST1_SEND_HOUR, POST2_SEND_HOUR, POST3_SEND_HOUR,
 )
 from database import init_db, cleanup_old_records
 from fetcher import fetch_all
-from processor import process
-from writer import write_all
-from sender import send_daily_articles, send_scheduled_post
+from processor import process, count_trend_topics
+from sender import send_all_immediately
 from digest import run_weekly_digest, run_monthly_digest
 
 logger = logging.getLogger(__name__)
@@ -79,8 +77,8 @@ def _is_last_day_of_month() -> bool:
 
 def _run_pipeline_thread():
     """
-    Chạy pipeline lúc 7AM: fetch → process → write → lưu pending_posts → gửi admin report.
-    Bài sẽ được gửi channel theo lịch riêng (7h/12h/17h).
+    Chạy pipeline lúc 7AM: fetch → process → gửi tất cả bài ngay lập tức.
+    Không dùng Gemini, không queue theo giờ.
     """
     if not _pipeline_lock.acquire(blocking=False):
         logger.warning("Pipeline đang chạy rồi — bỏ qua trigger này")
@@ -97,11 +95,11 @@ def _run_pipeline_thread():
                 logger.warning("Không có bài nào được chọn — pipeline kết thúc sớm")
                 return
 
-            enriched = write_all(selected)          # lưu vào pending_posts
-            send_daily_articles(enriched, stats)    # chỉ gửi admin report
+            trend_counts = count_trend_topics(raw_articles)
+            send_all_immediately(selected, stats, trend_counts)
             cleanup_old_records()
 
-            logger.info("========== Daily Pipeline Hoàn Thành — Bài sẽ gửi 7h/12h/17h ==========")
+            logger.info("========== Daily Pipeline Hoàn Thành — %d bài đã gửi ==========", len(selected))
 
         except Exception as e:
             logger.error("Lỗi pipeline: %s", e, exc_info=True)
@@ -109,19 +107,6 @@ def _run_pipeline_thread():
             _pipeline_lock.release()
 
     thread = threading.Thread(target=_task, name="pipeline", daemon=True)
-    thread.start()
-
-
-def _run_send_post(post_type: str):
-    """Gửi 1 bài theo lịch từ pending_posts."""
-    def _task():
-        try:
-            logger.info("Đang gửi bài theo lịch: %s", post_type)
-            send_scheduled_post(post_type)
-        except Exception as e:
-            logger.error("Lỗi gửi bài %s: %s", post_type, e, exc_info=True)
-
-    thread = threading.Thread(target=_task, name=f"send-{post_type}", daemon=True)
     thread.start()
 
 
@@ -155,25 +140,10 @@ def run_end_of_month_check():
 def _setup_schedule():
     """Đăng ký tất cả jobs với giờ đã convert sang UTC."""
 
-    # Pipeline: 07:00 GMT+7 — fetch + write + lưu pending
+    # Pipeline: 07:00 GMT+7 — fetch + gửi tất cả bài ngay
     utc_pipeline = _gmt7_to_utc_hour(DAILY_SEND_HOUR)
     t_pipeline   = f"{utc_pipeline:02d}:{DAILY_SEND_MINUTE:02d}"
     schedule.every().day.at(t_pipeline).do(_run_pipeline_thread)
-
-    # Gửi Morning Brief: 07:00 GMT+7 (sau pipeline ~1-2 phút nên đặt 07:05)
-    utc_p1 = _gmt7_to_utc_hour(POST1_SEND_HOUR)
-    t_p1   = f"{utc_p1:02d}:05"
-    schedule.every().day.at(t_p1).do(lambda: _run_send_post("morning_brief"))
-
-    # Gửi Deep Focus: 12:00 GMT+7
-    utc_p2 = _gmt7_to_utc_hour(POST2_SEND_HOUR)
-    t_p2   = f"{utc_p2:02d}:00"
-    schedule.every().day.at(t_p2).do(lambda: _run_send_post("deep_focus"))
-
-    # Gửi Brain Spark: 17:00 GMT+7
-    utc_p3 = _gmt7_to_utc_hour(POST3_SEND_HOUR)
-    t_p3   = f"{utc_p3:02d}:00"
-    schedule.every().day.at(t_p3).do(lambda: _run_send_post("brain_spark"))
 
     # Sunday digest: 09:00 GMT+7
     utc_digest  = _gmt7_to_utc_hour(DIGEST_SEND_HOUR)
@@ -184,10 +154,7 @@ def _setup_schedule():
     schedule.every().day.at(time_digest).do(run_end_of_month_check)
 
     logger.info("Lịch chạy đã được thiết lập:")
-    logger.info("  Pipeline       : 07:00 GMT+7 (%s UTC)", t_pipeline)
-    logger.info("  Morning Brief  : 07:05 GMT+7 (%s UTC)", t_p1)
-    logger.info("  Deep Focus     : 12:00 GMT+7 (%s UTC)", t_p2)
-    logger.info("  Brain Spark    : 17:00 GMT+7 (%s UTC)", t_p3)
+    logger.info("  Pipeline   : 07:00 GMT+7 (%s UTC) — fetch + gửi ngay", t_pipeline)
     logger.info("  Sunday digest  : 09:00 GMT+7 (%s UTC, Chủ Nhật)", time_digest)
     logger.info("  EOM check      : 09:00 GMT+7 (%s UTC, hằng ngày)", time_digest)
 

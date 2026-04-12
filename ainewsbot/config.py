@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # Validate biến môi trường bắt buộc
 # ---------------------------------------------------------------------------
 _REQUIRED_VARS = [
-    "GEMINI_API_KEY",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHANNEL_ID",
     "TELEGRAM_ADMIN_CHAT_ID",
@@ -56,7 +55,7 @@ def _validate_env() -> dict:
 # Gọi ngay khi import — fail fast nếu thiếu config
 _ENV = _validate_env()
 
-GEMINI_API_KEY         = _ENV["GEMINI_API_KEY"]
+GEMINI_API_KEY         = os.getenv("GEMINI_API_KEY", "")  # optional — dùng cho digest
 TELEGRAM_BOT_TOKEN     = _ENV["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID    = _ENV["TELEGRAM_CHANNEL_ID"]
 TELEGRAM_ADMIN_CHAT_ID = _ENV["TELEGRAM_ADMIN_CHAT_ID"]
@@ -123,4 +122,36 @@ CLEANUP_DAYS = 30  # xóa bản ghi cũ hơn N ngày
 # Processor
 # ---------------------------------------------------------------------------
 KEYWORD_OVERLAP_THRESHOLD = 0.40  # ngưỡng Jaccard để gộp bài liên quan
-TARGET_ARTICLE_COUNT      = 3     # số bài gửi mỗi ngày
+TARGET_ARTICLE_COUNT      = 3     # số bài gửi mỗi ngày (legacy — không dùng nữa)
+
+# ---------------------------------------------------------------------------
+# Scoring weights (tổng = 1.0)
+# ---------------------------------------------------------------------------
+SCORE_RECENCY_WEIGHT  = 0.35
+SCORE_SOURCE_WEIGHT   = 0.20
+SCORE_COVERAGE_WEIGHT = 0.20
+SCORE_KEYWORD_WEIGHT  = 0.15
+SCORE_CRYPTO_WEIGHT   = 0.10
+
+SCORE_BOOST_KEYWORDS = [
+    "agent", "llm", "gpt", "claude", "gemini", "open source",
+    "funding", "launch", "breakthrough", "raises", "billion",
+    "million", "series", "release", "introduces",
+]
+SCORE_CRYPTO_KEYWORDS = [
+    "bitcoin", "ethereum", "defi", "solana", "bnb", "xrp",
+    "token", "nft", "depin", "stablecoin", "layer2",
+]
+
+# ---------------------------------------------------------------------------
+# Resilience
+# ---------------------------------------------------------------------------
+MIN_ARTICLES_FETCH    = 20   # retry fetch nếu tổng bài < ngưỡng này
+MIN_ARTICLES_POST     = 5    # alert admin + bỏ qua channel nếu sau dedup < ngưỡng
+FETCH_RETRY_DELAY_SEC = 60   # giây chờ trước khi retry fetch
+
+# ---------------------------------------------------------------------------
+# Trend signals
+# ---------------------------------------------------------------------------
+TREND_MIN_COUNT = 3   # topic phải xuất hiện >= N lần để hiển thị
+TREND_TOP_N     = 3   # hiển thị tối đa N topic trong signals block

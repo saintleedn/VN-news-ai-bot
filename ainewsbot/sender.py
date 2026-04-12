@@ -246,3 +246,81 @@ def send_daily_articles(articles: list, stats: dict) -> None:
 def send_scheduled_post(post_type: str) -> None:
     """Entry point đồng bộ — gửi 1 bài theo lịch (7h/12h/17h)."""
     asyncio.run(_send_scheduled_post_async(post_type))
+
+
+# ---------------------------------------------------------------------------
+# Gửi tất cả bài ngay lập tức (không queue, không AI)
+# ---------------------------------------------------------------------------
+
+async def _send_all_immediately_async(articles: list, stats: dict, trend_counts: dict = None) -> None:
+    """Gửi toàn bộ articles thành tin nhắn Telegram ngay lập tức."""
+    from template_writer import build_messages
+    from config import MIN_ARTICLES_POST
+
+    if trend_counts is None:
+        trend_counts = {}
+
+    # --- Resilience: quá ít bài → alert admin, bỏ qua channel ---
+    if len(articles) < MIN_ARTICLES_POST:
+        logger.warning("Chỉ có %d bài sau dedup (< %d) — bỏ qua gửi channel", len(articles), MIN_ARTICLES_POST)
+        async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+            await _send_msg(
+                bot, TELEGRAM_ADMIN_CHAT_ID,
+                f"⚠️ <b>LOW CONTENT ALERT</b>\n"
+                f"Chỉ có <b>{len(articles)} bài</b> sau dedup (ngưỡng: {MIN_ARTICLES_POST}).\n"
+                f"Bỏ qua gửi channel hôm nay.\n"
+                f"Tổng fetch: {stats.get('total_fetched', 0)} | Bị lọc: {stats.get('duplicates_filtered', 0)}"
+            )
+        return
+
+    messages = build_messages(articles, trend_counts)
+    if not messages:
+        logger.warning("Không có bài nào để gửi")
+        return
+
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        # Admin report
+        now = datetime.now(TZ_GMT7).strftime("%d/%m/%Y %H:%M GMT+7")
+        sources_str = "\n".join(
+            f"  • {src}: {count} bài"
+            for src, count in stats.get("sources_breakdown", {}).items()
+        ) or "  • Không có"
+        trend_str = "\n".join(
+            f"  • {t}: ↑{c}" for t, c in trend_counts.items()
+        ) or "  • Không có"
+
+        report = (
+            f"✅ <b>BOT REPORT | {now}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📰 Gửi: {len(articles)} bài → {len(messages)} tin nhắn\n\n"
+            f"📊 <b>Thống kê fetch:</b>\n"
+            f"  • Tổng fetch: {stats.get('total_fetched', 0)}\n"
+            f"  • Bị lọc trùng: {stats.get('duplicates_filtered', 0)}\n"
+            f"  • Sau dedup: {stats.get('after_dedup', 0)}\n"
+            f"  • Nhóm bài: {stats.get('groups_formed', 0)}\n\n"
+            f"🗞️ <b>Nguồn hôm nay:</b>\n{sources_str}\n\n"
+            f"🔥 <b>Trend signals:</b>\n{trend_str}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+        await _send_msg(bot, TELEGRAM_ADMIN_CHAT_ID, report)
+
+        # Gửi lên channel
+        for i, msg in enumerate(messages, 1):
+            ok = await _send_msg(bot, TELEGRAM_CHANNEL_ID, msg)
+            if not ok:
+                logger.error("Thất bại khi gửi tin nhắn %d/%d", i, len(messages))
+                await _send_msg(
+                    bot, TELEGRAM_ADMIN_CHAT_ID,
+                    f"⚠️ <b>Lỗi gửi tin nhắn {i}/{len(messages)}</b>"
+                )
+            else:
+                logger.info("Tin nhắn %d/%d gửi thành công", i, len(messages))
+            if i < len(messages):
+                await asyncio.sleep(1)
+
+    logger.info("Đã gửi xong %d bài trong %d tin nhắn", len(articles), len(messages))
+
+
+def send_all_immediately(articles: list, stats: dict, trend_counts: dict = None) -> None:
+    """Entry point đồng bộ — gửi tất cả articles ngay lập tức (không queue)."""
+    asyncio.run(_send_all_immediately_async(articles, stats, trend_counts))

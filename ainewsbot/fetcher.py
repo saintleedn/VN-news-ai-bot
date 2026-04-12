@@ -11,11 +11,15 @@ from email.utils import parsedate_to_datetime
 import feedparser
 import requests
 
+import time
+
 from config import (
     RSS_FEEDS,
     GOOGLE_NEWS_KEYWORDS,
     FETCH_TIMEOUT,
     MAX_ARTICLES_PER_SOURCE,
+    MIN_ARTICLES_FETCH,
+    FETCH_RETRY_DELAY_SEC,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,22 +136,38 @@ def fetch_google_news(keyword: str) -> list:
 # Entry point chính
 # ---------------------------------------------------------------------------
 
-def fetch_all() -> list:
-    """
-    Thu thập tất cả nguồn tin: RSS feeds + Google News keywords.
-    Trả về list tổng hợp tất cả articles.
-    """
+def _fetch_all_sources() -> list:
+    """Thu thập tất cả nguồn tin: RSS feeds + Google News keywords."""
     all_articles = []
 
-    # --- RSS feeds cố định ---
     for name, url in RSS_FEEDS.items():
         articles = fetch_rss_source(name, url)
         all_articles.extend(articles)
 
-    # --- Google News theo từ khóa ---
     for keyword in GOOGLE_NEWS_KEYWORDS:
         articles = fetch_google_news(keyword)
         all_articles.extend(articles)
 
-    logger.info("Tổng cộng fetch được %d bài từ tất cả nguồn", len(all_articles))
     return all_articles
+
+
+def fetch_all() -> list:
+    """
+    Thu thập tất cả nguồn tin. Nếu < MIN_ARTICLES_FETCH → retry 1 lần sau delay.
+    Trả về list tổng hợp tất cả articles (dedup by URL giữa 2 lần fetch).
+    """
+    articles = _fetch_all_sources()
+
+    if len(articles) < MIN_ARTICLES_FETCH:
+        logger.warning(
+            "Chỉ fetch được %d bài (< %d) — retry sau %ds",
+            len(articles), MIN_ARTICLES_FETCH, FETCH_RETRY_DELAY_SEC,
+        )
+        time.sleep(FETCH_RETRY_DELAY_SEC)
+        retry = _fetch_all_sources()
+        seen  = {a["url"] for a in retry}
+        articles = retry + [a for a in articles if a["url"] not in seen]
+        logger.info("Sau retry: %d bài", len(articles))
+
+    logger.info("Tổng cộng fetch được %d bài từ tất cả nguồn", len(articles))
+    return articles
